@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version number (e.g., 2.1.0, or 2.1.0-beta.2 for beta)"
+        description: "Release version number (e.g., 2.5.5, or 2.5.5-beta.2 for beta). NOTE: Releasing 3.0.0 is NOT supported yet, this workflow currently releases the 2.5.X branch only."
         required: true
         type: string
       previous_version:
@@ -38,8 +38,11 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # TODO: temporarily pinned to 2.5.X because master is 3.0.0 and not ready to be released yet.
+      #       Remove this ref (and RELEASE_BASE_BRANCH below) once 3.0.0 is ready.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 2.5.X
           persist-credentials: true
           fetch-depth: 0 # Fetch all history and tags for update-version
 
@@ -64,6 +67,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_IS_BETA: ${{ inputs.is_beta }}
           RELEASE_PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          RELEASE_BASE_BRANCH: "2.5.X"
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_RUN_ID: ${{ github.run_id }}
@@ -76,7 +80,7 @@ jobs:
     outputs:
       pr_number: ${{ steps.pr.outputs.pr_number }}
 
-  # 2. Squash merge the release PR into master
+  # 2. Squash merge the release PR into the release base branch (2.5.X for now, normally master)
   #    Re-runnable: skips if the PR is already merged
   merge-pr:
     needs: prepare
@@ -121,8 +125,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # TODO: temporarily pinned to 2.5.X, see the prepare job
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 2.5.X
           persist-credentials: false
           fetch-depth: 0 # Fetch all history and tags for changelog generation
 
@@ -132,7 +138,11 @@ jobs:
           node-version: 24
 
       - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
+        run: curl -fsSL https://opencode.ai/v2/install | bash
+
+      - uses: $/.github/actions/setup-atlascloud
+        with:
+          api-key: ${{ secrets.ATLASCLOUD_API_KEY }}
 
       - name: Install dependencies
         run: node extra/release/install-deps.mjs
@@ -142,10 +152,11 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_IS_BETA: ${{ inputs.is_beta }}
           RELEASE_PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          RELEASE_BASE_BRANCH: "2.5.X"
           DRY_RUN: ${{ inputs.dry_run }}
           MERGE_SHA: ${{ needs.merge-pr.outputs.merge_sha }}
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ATLASCLOUD_API_KEY: ${{ secrets.ATLASCLOUD_API_KEY }}
         run: node extra/release/create-draft-release.mjs
 
   # 4. Build the frontend dist ONCE, upload it to the draft release and share
@@ -157,7 +168,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # Checkout the merged master code (merge_sha), not the workflow-dispatch SHA,
+      # Checkout the merged release branch code (merge_sha), not the workflow-dispatch SHA,
       # so package.json is already bumped to the release version before building.
       # Otherwise the frontend FRONTEND_VERSION (from npm_package_version) would be stale.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -195,7 +206,7 @@ jobs:
           path: ./tmp/dist.tar.gz
           retention-days: 90
 
-  # 5. Build and push all docker images from the merged master, reusing the dist
+  # 5. Build and push all docker images from the merged release branch, reusing the dist
   #    built by build-and-upload-assets (the frontend is never rebuilt here)
   #    Re-runnable: partial pushes are overwritten safely
   docker-images:
@@ -224,10 +235,10 @@ jobs:
           path: ./dist
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
